@@ -1,0 +1,149 @@
+<?php
+/**
+  * Implement hook_form_alter(&$form,&$form_state,$form_id)
+  */
+function svg_logo_form_alter(&$form,&$form_state,$form_id) {
+  switch ($form_id) {
+    case 'system_theme_settings':
+      // duplicate logo form for svg
+      $add_svg_logo = $form['logo']['default_logo'];
+      $svg_path = $form['logo']['settings']['logo_path'];
+      $svg_upload = $form['logo']['settings']['logo_upload'];
+      // adaped some description
+      $add_svg_logo['#title'] = t('Use a svg logo');
+      $svg_path['#title'] = t('Path to custom svg logo');
+      $svg_upload['#title'] = t('Upload logo svg image');
+      $add_svg_logo['#description'] = t('Check here if you want the theme to use a svg logo if the browser supports it.');
+      $svg_path['#description'] = t('The path to the file you would like to use as your svg logo file instead of the default logo.');
+      $svg_upload['#description'] = t('If you don\'t have direct file access to the server, use this field to upload your svg logo.');
+      // get theme name to get settings
+      $theme_settings_name = $form['var']['#value'];
+      $theme_settings_array = explode('_', $theme_settings_name);
+      $theme_settings_array_count = count($theme_settings_array);
+      $theme_name = ($theme_settings_array_count > 2)?$theme_settings_array[1]:null;
+      // if theme name has underscrores
+      if($theme_settings_array_count > 3) {
+        $theme_name = '';
+        foreach ($theme_settings_array as $key => $value) {
+          if($key != 0 && $key != ($theme_settings_array_count-1)) {
+            $theme_name .= $value;
+            if($key != ($theme_settings_array_count-2)) {
+              $theme_name .= '_';
+            }
+          }        
+        }
+      }
+      // get default value if there is any
+      $add_svg_logo['#default_value'] = theme_get_setting('svg_logo', $theme_name);
+      $svg_path['#default_value'] = theme_get_setting('svg_logo_path', $theme_name);
+      // If path is a public:// URI, display the path relative to the files
+      // directory; stream wrappers are not end-user friendly.
+      $original_path = $svg_path['#default_value'];
+      $friendly_path = NULL;
+      if (file_uri_scheme($original_path) == 'public') {
+        $friendly_path = file_uri_target($original_path);
+        $svg_path['#default_value'] = $friendly_path;
+      }
+      // add container
+      $form['logo']['settings']['svg'] = array(
+        '#type' => 'container', 
+        '#states' => array(
+          // Hide the logo settings when using the default logo.
+          'invisible' => array(
+            'input[name="svg_logo"]' => array('checked' => False),
+          ),
+        ),
+        '#weight' => 5,
+      );
+      // weight for the right order
+      $add_svg_logo['#weight'] = 4;
+      // add back to form
+      $form['logo']['settings']['svg_logo'] = $add_svg_logo;
+      $svg_path = $form['logo']['settings']['svg']['svg_logo_path'] = $svg_path;
+      $svg_upload = $form['logo']['settings']['svg']['svg_logo_upload'] = $svg_upload;
+      // add validator and submit function for svg path or upload
+      $form['#validate'][] = 'svg_logo_theme_settings_validate';
+      $form['#submit'][] = 'svg_logo_theme_settings_submit';
+      break;
+  }
+}
+
+/**
+ * Implements svg_logo_theme_settings_validate($form,&$form_state)
+ */
+function svg_logo_theme_settings_validate($form,&$form_state) {
+  // Handle file uploads.
+  $validators = array('file_validate_extensions' => array('svg'));
+
+  // Check for a new uploaded logo.
+  $file = file_save_upload('svg_logo_upload', $validators);
+  if (isset($file)) {
+    // File upload was attempted.
+    if ($file) {
+      // Put the temporary file in form_values so we can save it on submit.
+      $form_state['values']['svg_logo_upload'] = $file;
+    }
+    else {
+      // File upload failed.
+      form_set_error('svg_logo_upload', t('The svg logo could not be uploaded.'));
+    }
+  }
+
+  // If the user provided a path for a logo or favicon file, make sure a file
+  // exists at that path.
+  if ($form_state['values']['svg_logo_path']) {
+    $path = _system_theme_settings_validate_path($form_state['values']['svg_logo_path']);
+    if (!$path) {
+      form_set_error('svg_logo_path', t('The custom svg logo path is invalid.'));
+    }
+  }
+}
+
+/**
+ * Implements svg_logo_theme_settings_submit($form,&$form_state)
+ */
+function svg_logo_theme_settings_submit($form,&$form_state) {
+  $values = $form_state['values'];
+  // If the user uploaded a new logo or favicon, save it to a permanent location
+  // and use it in place of the default theme-provided file.
+  if ($file = $values['svg_logo_upload']) {
+    unset($values['svg_logo_upload']);
+    $filename = file_unmanaged_copy($file->uri);
+    $values['svg_logo'] = 1;
+    $values['svg_logo_path'] = $filename;
+  }
+  // If the user entered a path relative to the system files directory for
+  // a logo, store a public:// URI so the theme system can handle it.
+  if (!empty($values['svg_logo_path'])) {
+    $values['svg_logo_path'] = _system_theme_settings_validate_path($values['svg_logo_path']);
+  }
+  // load current theme settings to add svg settings
+  $key = $values['var'];
+  $theme_settings = variable_get($key);
+  // clean settings up - just to be shure
+  unset(
+    $theme_settings['logo_upload'],
+    $theme_settings['svg_logo_upload'],
+    $theme_settings['var'],
+    $theme_settings['submit'],
+    $theme_settings['reset'],
+    $theme_settings['form_id'],
+    $theme_settings['op'],
+    $theme_settings['form_build_id'],
+    $theme_settings['form_token']
+  );
+  // add svg settings 
+  $theme_settings['svg_logo'] = $values['svg_logo'];
+  $theme_settings['svg_logo_path'] = $values['svg_logo_path'];
+  // save theme settings an clear cache
+  variable_set($key, $theme_settings);
+  cache_clear_all();
+}
+
+/**
+ * Override or insert variables into the page template.
+ */
+function svg_logo_process_page(&$variables) {
+  $svg_path = theme_get_setting('svg_logo_path');
+  $variables['svg_logo'] = file_create_url($svg_path);
+}

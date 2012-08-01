@@ -1,0 +1,4 @@
+name = SVG Logo
+description = Add support for a SVG Logo.
+package = Other
+core = 7.x
